@@ -120,6 +120,17 @@ python -m pytest -q
 python -m app validate-log logs/YOUR_RUN_ID.json
 ```
 
+To check that a ticket behaves reliably, run it several times. Each run uses a fresh domain copy:
+
+```sh
+python -m app run examples/training/T14.json --repeat 5
+python -m app run examples/training/T14.json --repeat 5 --expect-agent claims --expect-outcome not_covered
+```
+
+A run passes when it completes, its log matches the schema, `agent_state` is not `failed`, and it matches any
+`--expect-agent/--expect-category/--expect-state/--expect-outcome` you give. The summary prints
+`PASS (5/5)`, `FLAKY (k/5)` or `FAIL (0/5)`. It also flags runs whose outcomes differ from each other.
+
 The dependency constraints pin the preparation environment. The primary baseline
 uses Anthropic directly and MCP SDK **2.2.0**, matching the participant MCP pretest.
 Teams may use another framework while preserving contracts. 

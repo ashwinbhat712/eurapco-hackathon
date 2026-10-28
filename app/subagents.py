@@ -7,6 +7,10 @@ from app.skills import load_skills
 
 WRITE_TOOLS = {"update_contact_details", "update_coverage", "terminate_policy",
                "create_claim", "pay_claim", "record_claim_outcome"}
+# Tools the LLM may call. Claims writes (create/pay/record) belong to the deterministic
+# ReimbursementWorkflow only, so the Claims model can read but never register or pay.
+MODEL_TOOLS = {"administration": ACCESS["administration"],
+               "claims": ("get_policy", "get_claim", "list_claims")}
 MAX_STEPS = 12
 
 
@@ -32,7 +36,7 @@ class SubagentRun:
             return Tool(func=invoke, name=name, description=TOOLS[name][1],
                         properties=schema["properties"], required=schema["required"])
 
-        return [make(name) for name in ACCESS[self.agent]]
+        return [make(name) for name in MODEL_TOOLS[self.agent]]
 
     def system_prompt(self):
         from agents.administration.agent import system_prompt as admin_prompt

@@ -6,6 +6,8 @@ Still handles initial requests only; human reply/resumption is a later step.
 import sys
 
 from app.contracts import validator
+from app.claims_extraction import extract_claim
+from app.claims_workflow import ReimbursementWorkflow
 from app.llm import make_client
 from app.mcp_client import DomainClient
 from app.subagents import SubagentRun
@@ -29,16 +31,32 @@ def record_final(log, final):
 
 
 async def dispatch(request, run_id, log, client, decision):
-    """Run the supervisor's chosen subagent; its answer is final, even when it is out of scope."""
+    """Run the supervisor's chosen subagent; its answer is final, even when it is out of scope.
+
+    New reimbursement requests skip the LLM subagent: the deterministic Claims engine decides and only
+    uses the model to extract document facts. If the Claims LLM agent itself recognizes a new
+    reimbursement (supervisor said otherwise), it hands the same request to that workflow.
+    """
     log.route(decision.agent, source="supervisor", request_category=decision.request_category,
               rationale=decision.rationale, attempts=decision.attempts)
     async with DomainClient(run_id, decision.agent, log) as domain:
-        subagent = SubagentRun(decision.agent, client, domain)
-        final = await subagent.run(request, classification_hint(decision))
+        if decision.agent == "claims" and decision.request_category == "reimbursement_request":
+            final = await reimbursement(request, client, domain, log)
+        else:
+            subagent = SubagentRun(decision.agent, client, domain)
+            final = await subagent.run(request, classification_hint(decision))
+            if decision.agent == "claims" and final["request_category"] == "reimbursement_request":
+                log.event("model_response", source="claims", response=final, handled_by="claims_engine")
+                final = await reimbursement(request, client, domain, log)
     if final["request_category"] != decision.request_category:
         log.event("model_response", source="supervisor", classification_mismatch={
             "supervisor": decision.request_category, "subagent": final["request_category"]})
     return final
+
+
+async def reimbursement(request, client, domain, log):
+    workflow = ReimbursementWorkflow(domain, lambda req: extract_claim(req, client), log)
+    return await workflow.run(request)
 
 
 async def run_request(request, run_id, log, provider=None):
