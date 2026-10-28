@@ -1,3 +1,18 @@
+[project]
+name = "eurapco-hackathon"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic==1.13.0",
+    "mcp==2.2.0",
+    "python-dotenv==1.2.3",
+    "jsonschema==4.26.0",
+    "datapizza-ai==0.1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==9.1.1"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--basetemp=.runtime/pytest"

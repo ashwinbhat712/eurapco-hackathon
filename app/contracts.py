@@ -2,6 +2,7 @@
 
 import copy
 import json
+import time
 from functools import lru_cache
 from pathlib import Path
 
@@ -59,4 +60,11 @@ def atomic_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    # Windows denies the rename while a sync client/antivirus briefly holds the target open.
+    for delay in (0.05, 0.1, 0.2, 0.4, 0.8):
+        try:
+            temporary.replace(path)
+            return
+        except PermissionError:
+            time.sleep(delay)
     temporary.replace(path)
