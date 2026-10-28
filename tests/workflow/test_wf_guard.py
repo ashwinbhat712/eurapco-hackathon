@@ -128,6 +128,33 @@ class TestDomainFailures:
         assert (workflow.state, workflow.outcome) == (State.FAILED, Outcome.TECHNICAL_FAILURE)
         assert workflow.in_flight_event_id is None
 
+    @staticmethod
+    def _operation_failed(effect_applied=False):
+        return {"ok": False, "error": {"code": ErrorCode.OPERATION_FAILED, "message": "Payment rail down.",
+                                       "retryable": False, "effect_applied": effect_applied}}
+
+    def test_failed_payment_marks_the_record_payment_failed(self, harness):
+        harness.small_claim()
+        harness.domain.fail_with["pay_claim"] = self._operation_failed()
+        workflow = harness.send(harness.request("Please reimburse my invoice")).workflow
+        assert workflow.state == State.FAILED
+        [claim] = harness.claims_on_policy()
+        assert claim["status"] == "payment_failed" and claim["payment"] is None
+        assert "Payment rail down." in claim["reason"]
+
+    def test_payment_with_unknown_effect_leaves_the_record_alone(self, harness):
+        harness.small_claim()
+        harness.domain.fail_with["pay_claim"] = self._operation_failed(effect_applied=None)
+        assert harness.send(harness.request("Please reimburse my invoice")).workflow.state == State.FAILED
+        assert [claim["status"] for claim in harness.claims_on_policy()] == ["registered"]
+        assert harness.domain.count("record_claim_outcome") == 0
+
+    def test_other_failed_writes_record_nothing(self, harness):
+        harness.phone_update()
+        harness.domain.fail_with["update_contact_details"] = self._operation_failed()
+        assert harness.send(harness.request()).workflow.state == State.FAILED
+        assert harness.domain.count("record_claim_outcome") == 0
+
 
 class TestScopedReads:
     def test_gathering_cannot_write(self, harness):

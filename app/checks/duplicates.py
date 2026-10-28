@@ -2,11 +2,12 @@
 
 from pydantic import BaseModel, ConfigDict
 
-from app.checks.base import parse_date, same_identifier
+from app.checks.base import ClaimStatus, IsoDate, Same
 
 # Records that already stand for this invoice: paid, waiting for the insurer, or registered/failed and still
 # open for payment. Re-registering any of them would create a second record or a second payment.
-BLOCKING_STATUSES = frozenset({"paid", "pending_authorization", "registered", "payment_failed"})
+BLOCKING_STATUSES = frozenset({ClaimStatus.PAID, ClaimStatus.PENDING_AUTHORIZATION, ClaimStatus.REGISTERED,
+                               ClaimStatus.PAYMENT_FAILED})
 
 
 class DuplicateCheck(BaseModel):
@@ -27,24 +28,26 @@ class DuplicateCheck(BaseModel):
                 "closed_matches": list(self.closed_matches)}
 
 
-def _year(value):
-    parsed = parse_date(value)
-    return parsed.year if parsed else None
+class DuplicateFinder:
+    """Looks for an existing record of the same invoice in one policy's claim history."""
 
+    def __init__(self, claims):
+        self.claims = claims
 
-def _matches(claim, provider_id, invoice_number, year):
-    invoice = claim.get("invoice") or {}
-    return (same_identifier(invoice.get("provider_id"), provider_id)
-            and same_identifier(invoice.get("invoice_number"), invoice_number)
-            and _year(invoice.get("invoice_date")) == year)
+    def find(self, *, provider_id, invoice_number, invoice_date):
+        year = IsoDate.year(invoice_date)
+        if year is None or not provider_id or not invoice_number:
+            return DuplicateCheck(invalid_key=True)
+        matches = [claim for claim in self.claims if self._matches(claim, provider_id, invoice_number, year)]
+        blocking = [claim for claim in matches if claim.get("status") in BLOCKING_STATUSES]
+        paid_first = sorted(blocking, key=lambda claim: claim.get("status") != ClaimStatus.PAID)
+        return DuplicateCheck(duplicate=paid_first[0] if paid_first else None,
+                              closed_matches=tuple(claim.get("claim_id", "") for claim in matches
+                                                   if claim not in blocking))
 
-
-def find_duplicate(claims, *, provider_id, invoice_number, invoice_date):
-    year = _year(invoice_date)
-    if year is None or not provider_id or not invoice_number:
-        return DuplicateCheck(invalid_key=True)
-    matches = [claim for claim in claims if _matches(claim, provider_id, invoice_number, year)]
-    blocking = [claim for claim in matches if claim.get("status") in BLOCKING_STATUSES]
-    paid_first = sorted(blocking, key=lambda claim: claim.get("status") != "paid")
-    return DuplicateCheck(duplicate=paid_first[0] if paid_first else None,
-                          closed_matches=tuple(claim["claim_id"] for claim in matches if claim not in blocking))
+    @staticmethod
+    def _matches(claim, provider_id, invoice_number, year):
+        invoice = (claim.get("invoice") if isinstance(claim, dict) else None) or {}
+        return (Same.identifier(invoice.get("provider_id"), provider_id)
+                and Same.identifier(invoice.get("invoice_number"), invoice_number)
+                and IsoDate.year(invoice.get("invoice_date")) == year)

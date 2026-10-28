@@ -7,13 +7,13 @@ from typing import ClassVar
 
 from pydantic import Field
 
-from app.contracts import TOOLS, validator
+from app.contracts import TOOLS, Tool, validator
 from app.workflow.ports import Call
 from app.workflow.schema import Sha256, StateModel
 from app.workflow.states import Outcome
 
-WRITE_TOOLS = frozenset({"update_contact_details", "update_coverage", "terminate_policy",
-                         "create_claim", "pay_claim", "record_claim_outcome"})
+WRITE_TOOLS = frozenset({Tool.UPDATE_CONTACT_DETAILS, Tool.UPDATE_COVERAGE, Tool.TERMINATE_POLICY,
+                         Tool.CREATE_CLAIM, Tool.PAY_CLAIM, Tool.RECORD_CLAIM_OUTCOME})
 
 
 class ProposalStatus(StrEnum):

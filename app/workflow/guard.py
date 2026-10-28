@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import Field
 
+from app.contracts import Tool
 from app.workflow.ports import Call
 from app.workflow.proposal import WRITE_TOOLS, CallCheck
 from app.workflow.record import LedgerEntry, LedgerStatus
@@ -148,7 +149,7 @@ class WriteGuard:
                       if e.hash == digest and e.status != LedgerStatus.FAILED), None)
         if entry and entry.status == LedgerStatus.DONE:
             return entry.result  # Never repeat a successful write.
-        if entry and call.tool == "create_claim":  # Not idempotent: a new record ID each time.
+        if entry and call.tool == Tool.CREATE_CLAIM:  # Not idempotent: a new record ID each time.
             found = await self._find_created(call)
             if found is not None:
                 return self._settle(entry, found)
@@ -167,7 +168,7 @@ class WriteGuard:
         """Duplicate key from docs/policy.md: provider ID + invoice number + invoice-date year."""
         invoice = call.args["invoice"]
         key = (invoice["provider_id"], invoice["invoice_number"], invoice["invoice_date"][:4])
-        listing = await self.domain.call("list_claims", {"policy_id": call.args["policy_id"]})
+        listing = await self.domain.call(Tool.LIST_CLAIMS, {"policy_id": call.args["policy_id"]})
         claims = listing["data"]["claims"] if listing["ok"] else []
         match = next((claim for claim in claims if (claim["invoice"]["provider_id"], claim["invoice"]["invoice_number"],
                                                     claim["invoice"]["invoice_date"][:4]) == key), None)

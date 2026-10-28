@@ -66,6 +66,17 @@ class TestInformation:
         assert check(workflow("reimbursement_request", facts)).missing == ("prescription_patient",
                                                                           "prescription_service")
 
+    def test_prescription_for_another_service_is_asked_for_again(self, check):
+        facts = {**INVOICE, "service_category": "diagnostic_test", "prescription_patient": "Jamie Example",
+                 "prescription_service": "physiotherapy"}
+        result = check(workflow("reimbursement_request", facts))
+        assert result.missing == ("prescription_service",) and "same service" in result.question
+
+    def test_matching_prescription_is_enough(self, check):
+        facts = {**INVOICE, "service_category": "physiotherapy", "prescription_patient": "Jamie Example",
+                 "prescription_service": "physiotherapy"}
+        assert check(workflow("reimbursement_request", facts)).missing == ()
+
     def test_unpaid_invoice_is_missing_payment_proof(self, check):
         assert "invoice_paid" in check(workflow("reimbursement_request", {**INVOICE, "invoice_paid": False})).missing
 

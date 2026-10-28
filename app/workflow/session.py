@@ -2,9 +2,11 @@
 
 from contextlib import AsyncExitStack
 
-from app.contracts import ACCESS
-from app.workflow.guard import Failure, ScopedTools, WriteGuard
+from app.checks.base import ClaimStatus
+from app.contracts import ACCESS, Tool
+from app.workflow.guard import ErrorCode, Failure, ScopedTools, WriteGuard
 from app.workflow.machine import StateMachine
+from app.workflow.ports import Call
 from app.workflow.proposal import WRITE_TOOLS
 from app.workflow.states import TERMINAL, Outcome, State
 
@@ -12,6 +14,8 @@ from app.workflow.states import TERMINAL, Outcome, State
 class Session:
     BUSINESS_OUTCOME = Outcome.INVALID_INPUT  # NOT_FOUND / REFERENCE_MISMATCH / INVALID_STATE (team decision).
     HANDOVER_NEXT_STEP = "Correct the call format by hand and execute it once; never repeat earlier successful writes."
+    FAILED_WRITE_OUTCOME = {Tool.PAY_CLAIM: ClaimStatus.PAYMENT_FAILED}
+    RECORD_FAILED = "RecordOutcomeFailed"
 
     def __init__(self, deps, workflow, log, event_time):
         self.deps, self.workflow, self.log, self.event_time = deps, workflow, log, event_time
@@ -62,6 +66,7 @@ class Session:
             bound = call.bind(results)
             written = await guard.run_stored(bound)
             if not written.ok:
+                await self._record_failed_write(guard, bound, written)
                 self._on_failure[written.failure](bound, written)
                 return None
             results.append(written.result)
@@ -75,10 +80,24 @@ class Session:
             tools = ScopedTools(await self.domain(), self.log, [bound.tool])
             written = await guard.run_proposed(bound, self.agent, tools)
             if not written.ok:
+                await self._record_failed_write(guard, bound, written)
                 self._on_failure[written.failure](bound, written)
                 return None
             results.append(written.result)
         return results
+
+    async def _record_failed_write(self, guard, call, written):
+        """A payment that technically failed with no effect leaves its record payment_failed, not registered."""
+        outcome = self.FAILED_WRITE_OUTCOME.get(call.tool)
+        error = written.result["error"]
+        if outcome is None or error["code"] != ErrorCode.OPERATION_FAILED or error.get("effect_applied") is not False:
+            return
+        record = Call(tool=Tool.RECORD_CLAIM_OUTCOME, args={
+            "policy_id": call.args["policy_id"], "claim_id": call.args["claim_id"], "outcome": outcome,
+            "reason": f"{call.tool} failed: {error['code']}: {error['message']}"})
+        recorded = await guard.run_stored(record)
+        if not recorded.ok:  # The workflow fails anyway; the log keeps that the record could not be updated.
+            self.log.event("error", error_type=self.RECORD_FAILED, message=str(recorded.result["error"]))
 
     async def finish(self, target, outcome, results, reason):
         """Final message from the ACTUAL results. A message failure must not undo a truthful completion."""

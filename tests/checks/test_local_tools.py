@@ -5,7 +5,9 @@ import json
 
 import pytest
 
-from app.checks.tools import LOCAL_ACCESS, LocalTools, datapizza_tools
+from app.checks.toolkit import LocalToolkit
+from app.checks.tools import CalculateReimbursement, CheckCoverageChange, CheckReimbursementEligibility, \
+    FindDuplicateClaim
 from app.domain import DomainStore
 
 
@@ -39,53 +41,98 @@ def run(coroutine):
 
 
 def test_calculation_reads_current_policy(domain):
-    result = run(LocalTools(domain, "POL-002").calculate_reimbursement("EUR 2,000.00"))
+    result = run(CalculateReimbursement(domain, "POL-002")(expense="EUR 2,000.00"))
     assert result["data"]["final"] == "900.00" and result["data"]["capped_by_remaining_limit"] is True
     assert domain.calls == [("get_policy", {"policy_id": "POL-002"})]
 
 
 def test_calculation_sees_a_change_made_earlier_in_the_run(domain):
     run(domain.call("update_coverage", {"policy_id": "POL-001", "changes": {"deductible": "200.00"}}))
-    assert run(LocalTools(domain, "POL-001").calculate_reimbursement("180"))["data"]["final"] == "0.00"
+    assert run(CalculateReimbursement(domain, "POL-001")(expense="180"))["data"]["final"] == "0.00"
 
 
 def test_bad_amount_is_a_correctable_error_without_reads(domain):
-    result = run(LocalTools(domain, "POL-001").calculate_reimbursement("1.925"))
-    assert result["ok"] is False and result["error"]["field"] == "expense" and domain.calls == []
+    result = run(CalculateReimbursement(domain, "POL-001")(expense="1.925"))
+    assert result["ok"] is False and result["error"]["field"] == "expense" and result["error"]["retryable"]
+    assert domain.calls == []
 
 
 def test_unknown_policy_returns_the_domain_error(domain):
-    result = run(LocalTools(domain, "POL-999").check_coverage_change(annual_limit="5000"))
+    result = run(CheckCoverageChange(domain, "POL-999")(annual_limit="5000"))
     assert result["ok"] is False and result["error"]["code"] == "NOT_FOUND"
 
 
 def test_duplicate_tool_finds_history(domain):
-    result = run(LocalTools(domain, "POL-001").find_duplicate_claim("PROVIDER-001", "INV-2026-001", "2026-02-02"))
+    result = run(FindDuplicateClaim(domain, "POL-001")(provider_id="PROVIDER-001", invoice_number="INV-2026-001",
+                                                       invoice_date="2026-02-02"))
     assert result["data"]["duplicate"] is True and result["data"]["existing_claim_id"] == "CL-H001"
 
 
+def test_duplicate_tool_refuses_an_unreadable_date_instead_of_saying_no_duplicate(domain):
+    result = run(FindDuplicateClaim(domain, "POL-001")(provider_id="PROVIDER-001", invoice_number="INV-2026-001",
+                                                       invoice_date="02/02/2026"))
+    assert result["ok"] is False and result["error"]["field"] == "invoice_date" and domain.calls == []
+
+
 def test_eligibility_tool(domain):
-    result = run(LocalTools(domain, "POL-003").check_reimbursement_eligibility(
-        "Jamie Demo", "physiotherapy", "2026-03-01", "2026-03-02", "100.00"))
+    result = run(CheckReimbursementEligibility(domain, "POL-003")(
+        patient_name="Jamie Demo", service_category="physiotherapy", service_date="2026-03-01",
+        invoice_date="2026-03-02", expense="100.00"))
     assert result["data"]["outcome"] == "inactive_policy"
+
+
+def test_coverage_tool_needs_at_least_one_value(domain):
+    result = run(CheckCoverageChange(domain, "POL-001")())
+    assert result["ok"] is False and result["error"]["code"] == "INVALID_ARGUMENT" and domain.calls == []
+
+
+def test_all_missing_arguments_are_named(domain):
+    result = run(FindDuplicateClaim(domain, "POL-001")(provider_id="PROVIDER-001", invoice_number=""))
+    error = result["error"]
+    assert error["field"] == "invoice_number" and "invoice_number, invoice_date" in error["message"]
+
+
+class BrokenDomain(Domain):
+    """Returns a policy whose terms cannot be read."""
+
+    async def call(self, name, arguments):
+        result = await super().call(name, arguments)
+        result["data"]["financial_terms"]["deductible"] = "fifty"
+        return result
+
+
+def test_unreadable_domain_data_is_an_error_not_a_crash(tmp_path):
+    store = DomainStore(tmp_path)
+    result = run(CalculateReimbursement(BrokenDomain(store, store.start_run()), "POL-001")(expense="180.00"))
+    assert result["ok"] is False and result["error"]["code"] == "OPERATION_FAILED"
+    assert result["error"]["retryable"] is False
 
 
 @pytest.mark.parametrize("agent", ["administration", "claims"])
 def test_datapizza_tools_per_agent(domain, agent):
-    assert [tool.name for tool in datapizza_tools(agent, domain, "POL-001")] == list(LOCAL_ACCESS[agent])
+    names = [tool.name for tool in LocalToolkit(agent, domain, "POL-001").datapizza_tools()]
+    assert names == [tool.name for tool in LocalToolkit.ACCESS[agent]]
 
 
 def test_model_cannot_choose_the_policy_and_calls_are_logged(domain):
     log = Log()
-    tool = next(tool for tool in datapizza_tools("claims", domain, "POL-002", log)
+    tool = next(tool for tool in LocalToolkit("claims", domain, "POL-002", log).datapizza_tools()
                 if tool.name == "calculate_reimbursement")
     result = json.loads(run(tool.func(expense="2000.00", policy_id="POL-001")))
     assert result["data"]["final"] == "900.00"
     assert [kind for kind, _ in log.events] == ["tool_call", "tool_result"]
-    assert log.events[0][1] == {"name": "calculate_reimbursement", "arguments": {"expense": "2000.00"}, "local": True}
+    assert log.events[0][1] == {"name": "calculate_reimbursement", "arguments": {"expense": "2000.00"},
+                                "ignored": ["policy_id"], "local": True}
 
 
-def test_missing_required_argument_is_an_error(domain):
-    tool = datapizza_tools("claims", domain, "POL-001")[2]
-    result = json.loads(run(tool.func(provider_id="PROVIDER-001", invoice_number="")))
-    assert result["ok"] is False and result["error"]["field"] == "invoice_number"
+def test_null_optional_argument_falls_back_to_default(domain):
+    tool = next(tool for tool in LocalToolkit("claims", domain, "POL-001").datapizza_tools()
+                if tool.name == "check_reimbursement_eligibility")
+    result = json.loads(run(tool.func(patient_name="Jamie Example", service_category="physiotherapy",
+                                      service_date="2026-03-01", invoice_date="2026-03-02", expense="100.00",
+                                      currency=None)))
+    assert result["data"]["ok"] is True
+
+
+def test_guidance_explains_tool_errors():
+    assert "retryable" in LocalToolkit.guidance("claims") and "retryable" in LocalToolkit.guidance("administration")

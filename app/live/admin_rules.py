@@ -1,6 +1,7 @@
 """Administration rules (docs/policy.md): contact update, coverage change, termination, policy enquiry."""
 
-from app.checks.coverage import CATALOG_KEYS, check_coverage_change
+from app.checks.coverage import CoverageChangeCheck, CoverageField
+from app.contracts import Tool
 from app.live.common import PolicyStatus, ask, close, get_policy, inactive_policy, no_change
 from app.workflow.ports import Action, AuthorizationPlan, Call, Decision, InformationCheck
 from app.workflow.states import Outcome
@@ -26,7 +27,7 @@ def check_contact(workflow):
 
 
 def check_coverage(workflow):
-    return _check([] if any(workflow.facts.get(key) for key in CATALOG_KEYS) else ["coverage_values"])
+    return _check([] if any(workflow.facts.get(key) for key in CoverageField) else ["coverage_values"])
 
 
 def check_termination(workflow):
@@ -59,21 +60,21 @@ async def decide_contact_update(workflow, reader, agent):
     changes = _contact_changes(workflow.facts, policy["contacts"])
     if not changes:
         return no_change("The contact details already have these values; nothing was changed.")
-    call = Call(tool="update_contact_details", args={"policy_id": workflow.policy_id, "changes": changes})
+    call = Call(tool=Tool.UPDATE_CONTACT_DETAILS, args={"policy_id": workflow.policy_id, "changes": changes})
     return Decision(action=Action.EXECUTE, outcome=Outcome.UPDATED, reason="Contact details change: "
                     + ", ".join(changes), calls=(call,))
 
 
 async def decide_coverage_change(workflow, reader, agent):
     policy = await get_policy(reader, workflow)
-    check = check_coverage_change(policy, annual_limit=workflow.facts.get("annual_limit"),
-                                  deductible=workflow.facts.get("deductible"))
+    check = CoverageChangeCheck(policy).check(annual_limit=workflow.facts.get("annual_limit"),
+                                              deductible=workflow.facts.get("deductible"))
     if not check.result.ok:
         return close(check.result.outcome, f"Unsupported coverage change: {check.result.reason} Nothing was changed.")
     if check.no_change:
         return no_change("The coverage already has these values; nothing was changed.")
     changes, terms = check.changes, policy["financial_terms"]
-    call = Call(tool="update_coverage", args={"policy_id": workflow.policy_id, "changes": changes})
+    call = Call(tool=Tool.UPDATE_COVERAGE, args={"policy_id": workflow.policy_id, "changes": changes})
     text = ", ".join(f"{key} {terms[key]} -> {value}" for key, value in changes.items())
     if check.needs_authorization:
         plan = AuthorizationPlan(summary=f"Coverage change on {workflow.policy_id}: {text}.",
@@ -90,7 +91,7 @@ async def decide_termination(workflow, reader, agent):
         return no_change("The policy is already terminated; nothing was changed.")
     if policy["status"] != PolicyStatus.ACTIVE:
         return inactive_policy(policy)
-    call = Call(tool="terminate_policy", args={"policy_id": workflow.policy_id})
+    call = Call(tool=Tool.TERMINATE_POLICY, args={"policy_id": workflow.policy_id})
     plan = AuthorizationPlan(summary=f"Terminate policy {workflow.policy_id} at the policyholder's request.",
                              outcome=Outcome.TERMINATED, on_approve=(call,))
     return Decision(action=Action.ASK_AUTHORIZATION, outcome=Outcome.TERMINATED,

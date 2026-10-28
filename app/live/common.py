@@ -1,6 +1,7 @@
 """Shared helpers for the live rules: reads and fixed decisions."""
 
 from app.checks.base import PolicyStatus
+from app.contracts import Tool
 from app.workflow.ports import Action, Decision
 from app.workflow.states import Outcome
 
@@ -19,7 +20,7 @@ async def read(reader, tool, args):
 
 
 async def get_policy(reader, workflow):
-    return await read(reader, "get_policy", {"policy_id": workflow.policy_id})
+    return await read(reader, Tool.GET_POLICY, {"policy_id": workflow.policy_id})
 
 
 def close(outcome, reason, message=""):

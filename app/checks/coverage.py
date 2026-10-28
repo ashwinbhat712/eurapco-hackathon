@@ -1,12 +1,17 @@
 """Coverage change (docs/policy.md): catalog values, increases only, atomic, insurer approval above thresholds."""
 
+from enum import StrEnum
+
 from pydantic import BaseModel, ConfigDict
 
-from app.checks.base import CheckResult, PolicyStatus, collect
-from app.checks.money import format_money, parse_money
+from app.checks.base import CheckResult, PolicyStatus
+from app.checks.money import Money
 from app.workflow.states import Outcome
 
-CATALOG_KEYS = {"annual_limit": "annual_limits", "deductible": "deductibles"}  # Field -> allowed_values key.
+
+class CoverageField(StrEnum):
+    ANNUAL_LIMIT = "annual_limit"
+    DEDUCTIBLE = "deductible"
 
 
 class CoverageCheck(BaseModel):
@@ -25,33 +30,40 @@ class CoverageCheck(BaseModel):
                 "needs_authorization": self.needs_authorization}
 
 
-def _field_issues(field, raw, policy):
-    value = parse_money(raw)
-    current = parse_money(policy["financial_terms"][field])
-    allowed = [parse_money(item) for item in policy["allowed_values"][CATALOG_KEYS[field]]]
-    listing = ", ".join(policy["allowed_values"][CATALOG_KEYS[field]])
-    return (
-        (value is None, Outcome.INVALID_INPUT, f"{field} {raw!r} is not a valid EUR amount."),
-        (value is not None and value not in allowed, Outcome.INVALID_INPUT,
-         f"{field} {raw} is not offered; allowed values are {listing}."),
-        (value is not None and value in allowed and value < current, Outcome.INVALID_INPUT,
-         f"{field} can only be increased (current {format_money(current)})."),
-    )
-
-
-def check_coverage_change(policy, *, annual_limit=None, deductible=None):
+class CoverageChangeCheck:
     """Atomic: one inadmissible field rejects the whole change. Authorization is judged on changed fields only."""
-    requested = {field: raw for field, raw in (("annual_limit", annual_limit), ("deductible", deductible))
-                 if raw not in (None, "")}
-    result = collect((
-        (policy["status"] != PolicyStatus.ACTIVE, Outcome.INACTIVE_POLICY, f"The policy is {policy['status']}."),
-        (not requested, Outcome.INVALID_INPUT, "No new annual limit or deductible was given."),
-        *(issue for field, raw in requested.items() for issue in _field_issues(field, raw, policy)),
-    ))
-    if not result.ok:
-        return CoverageCheck(result=result)
-    terms, thresholds = policy["financial_terms"], policy["authorization_thresholds"]
-    changes = {field: format_money(parse_money(raw)) for field, raw in requested.items()
-               if parse_money(raw) != parse_money(terms[field])}
-    needs = any(parse_money(value) > parse_money(thresholds[field]) for field, value in changes.items())
-    return CoverageCheck(result=result, changes=changes, needs_authorization=needs)
+
+    CATALOG_KEYS = {CoverageField.ANNUAL_LIMIT: "annual_limits", CoverageField.DEDUCTIBLE: "deductibles"}
+
+    def __init__(self, policy):
+        self.policy = policy
+
+    def check(self, *, annual_limit=None, deductible=None):
+        policy = self.policy
+        given = {CoverageField.ANNUAL_LIMIT: annual_limit, CoverageField.DEDUCTIBLE: deductible}
+        requested = {field: raw for field, raw in given.items() if raw not in (None, "")}
+        result = CheckResult.collect((
+            (policy["status"] != PolicyStatus.ACTIVE, Outcome.INACTIVE_POLICY, f"The policy is {policy['status']}."),
+            (not requested, Outcome.INVALID_INPUT, "No new annual limit or deductible was given."),
+            *(issue for field, raw in requested.items() for issue in self._field_issues(field, raw)),
+        ))
+        if not result.ok:
+            return CoverageCheck(result=result)
+        terms, thresholds = policy["financial_terms"], policy["authorization_thresholds"]
+        changes = {str(field): Money.format(Money.parse(raw)) for field, raw in requested.items()
+                   if Money.parse(raw) != Money.parse(terms[field])}
+        needs = any(Money.parse(value) > Money.parse(thresholds[field]) for field, value in changes.items())
+        return CoverageCheck(result=result, changes=changes, needs_authorization=needs)
+
+    def _field_issues(self, field, raw):
+        value = Money.parse(raw)
+        current = Money.parse(self.policy["financial_terms"][field])
+        catalog = self.policy["allowed_values"][self.CATALOG_KEYS[field]]
+        allowed = [Money.parse(item) for item in catalog]
+        return (
+            (value is None, Outcome.INVALID_INPUT, f"{field} {raw!r} is not a valid EUR amount."),
+            (value is not None and value not in allowed, Outcome.INVALID_INPUT,
+             f"{field} {raw} is not offered; allowed values are {', '.join(catalog)}."),
+            (value is not None and value in allowed and value < current, Outcome.INVALID_INPUT,
+             f"{field} can only be increased (current {Money.format(current)})."),
+        )

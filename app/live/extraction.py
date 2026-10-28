@@ -5,6 +5,7 @@ properties make the API's grammar compilation exponentially slower (platform.cla
 "Schema complexity limits"); the claims schema with 14 nullable fields timed out on the first call.
 """
 
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -14,8 +15,8 @@ from app.workflow.ports import Findings
 from app.workflow.schema import Vocabulary
 from app.workflow.states import Agent
 
-AdminCategory = Literal[tuple(sorted(Vocabulary.BY_AGENT[Agent.ADMINISTRATION]))]
-ClaimsCategory = Literal[tuple(sorted(Vocabulary.BY_AGENT[Agent.CLAIMS]))]
+AdminCategory = StrEnum("AdminCategory", {name: name for name in sorted(Vocabulary.BY_AGENT[Agent.ADMINISTRATION])})
+ClaimsCategory = StrEnum("ClaimsCategory", {name: name for name in sorted(Vocabulary.BY_AGENT[Agent.CLAIMS])})
 ServiceCategory = Literal["", "specialist_consultation", "diagnostic_test", "physiotherapy",
                           "dental_care", "cosmetic_treatment", "medicines", "other"]
 NOT_FOUND = (None, "", False)
@@ -33,7 +34,7 @@ class Extraction(BaseModel):
 
 
 class AdminExtraction(Extraction):
-    category: AdminCategory
+    category: AdminCategory  # pyright: ignore[reportInvalidTypeForm]
     question: str = ""
     email: str = ""
     phone: str = ""
@@ -47,7 +48,7 @@ class AdminExtraction(Extraction):
 
 
 class ClaimsExtraction(Extraction):
-    category: ClaimsCategory
+    category: ClaimsCategory  # pyright: ignore[reportInvalidTypeForm]
     claim_id: str = ""
     question: str = ""
     patient_name: str = Field(default="", description="Patient named on the invoice.")
@@ -61,7 +62,7 @@ class ClaimsExtraction(Extraction):
     currency: str = ""
     invoice_paid: bool = Field(default=False, description="True only if the invoice says it is paid.")
     prescription_patient: str = ""
-    prescription_service: str = ""
+    prescription_service: ServiceCategory = Field(default="", description="The prescribed service, same catalog.")
 
 
 EXTRACTION_BY_AGENT = {Agent.ADMINISTRATION: AdminExtraction, Agent.CLAIMS: ClaimsExtraction}

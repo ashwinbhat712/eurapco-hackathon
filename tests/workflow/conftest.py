@@ -39,6 +39,10 @@ class InProcessDomain:
         self.log.event("tool_call", name=name, arguments={"run_id": self.run_id, **arguments})
         if name in self.factory.raise_before:
             raise self.factory.raise_before.pop(name)
+        if name in self.factory.fail_with:
+            result = self.factory.fail_with.pop(name)
+            self.log.event("tool_result", name=name, result=result)
+            return result
         result = self.factory.store.call(name, {**arguments, "run_id": self.run_id})
         self.log.event("tool_result", name=name, result=result)
         if name in self.factory.raise_after:
@@ -49,6 +53,7 @@ class InProcessDomain:
 class DomainFactory:
     def __init__(self, store):
         self.store, self.calls, self.raise_before, self.raise_after = store, [], {}, {}
+        self.fail_with = {}  # tool -> error result returned instead of calling the store.
 
     def __call__(self, run_id, agent, log):
         return InProcessDomain(self, run_id, agent, log)
