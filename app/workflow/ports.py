@@ -64,6 +64,8 @@ class Findings(ValueModel):
         return self
     # A ticket handles one operation. Other operations in the same message are named here and not handled.
     other_requests: tuple[str, ...] = ()
+    # The customer takes the request back ("forget it"): close as no_change, no rules, no writes.
+    withdrawn: bool = False
 
 
 class InformationCheck(ValueModel):
@@ -107,7 +109,7 @@ class Decision(ValueModel):
 
 @runtime_checkable
 class Router(Protocol):
-    def route(self, text: str) -> RouteResult: ...
+    async def route(self, request: dict) -> RouteResult: ...  # The initial request event only.
 
 
 @runtime_checkable

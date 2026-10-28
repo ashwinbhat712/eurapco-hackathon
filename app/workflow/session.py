@@ -95,13 +95,19 @@ class Session:
 
     def fail(self, exc):
         """Transition 21. Effects already applied stay; the snapshot shows them."""
-        reason = f"{type(exc).__name__} in {self.workflow.state}."
+        cause = self._root_cause(exc)
+        reason = f"{type(cause).__name__} in {self.workflow.state}."
         try:
-            self.log.event("error", error_type=type(exc).__name__, message=str(exc)[:500])
+            self.log.event("error", error_type=type(cause).__name__, message=str(cause)[:500])
             self.move(State.FAILED, reason=reason)
         except Exception:  # The logger already saved a failed record; keep the workflow file consistent.
             StateMachine().transition(self.workflow, State.FAILED, reason=reason)
             self.save()
+
+    @classmethod
+    def _root_cause(cls, exc):
+        """The first leaf of nested ExceptionGroups (the MCP client's task groups wrap the real error)."""
+        return cls._root_cause(exc.exceptions[0]) if isinstance(exc, BaseExceptionGroup) else exc
 
     def _close_business(self, call, written):
         error = written.result["error"]

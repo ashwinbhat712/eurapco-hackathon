@@ -100,8 +100,8 @@ class FakeRouter:
     def __init__(self, agent=Agent.ADMINISTRATION, hint=None):
         self.result, self.texts = RouteResult(agent=agent, category_hint=hint), []
 
-    def route(self, text):
-        self.texts.append(text)
+    async def route(self, request):
+        self.texts.append(request["text"])
         return self.result
 
 

@@ -17,8 +17,10 @@ class SubagentRun:
         self.agent, self.client, self.domain = agent, client, domain
         self.successful_writes = []
 
-    def tools(self):
+    def tools(self, policy_id=None):
         from datapizza.tools import Tool
+
+        from app.checks.tools import datapizza_tools
 
         def make(name):
             schema = tool_schema(name, model_facing=True)
@@ -32,13 +34,18 @@ class SubagentRun:
             return Tool(func=invoke, name=name, description=TOOLS[name][1],
                         properties=schema["properties"], required=schema["required"])
 
-        return [make(name) for name in ACCESS[self.agent]]
+        domain_tools = [make(name) for name in ACCESS[self.agent]]
+        if not policy_id:
+            return domain_tools
+        return domain_tools + datapizza_tools(self.agent, self.domain, policy_id, getattr(self.domain, "log", None))
 
     def system_prompt(self):
         from agents.administration.agent import system_prompt as admin_prompt
         from agents.claims.agent import system_prompt as claims_prompt
+        from app.checks.tools import LOCAL_TOOL_GUIDANCE
 
         prompt = admin_prompt() if self.agent == "administration" else claims_prompt()
+        prompt += "\n\n" + LOCAL_TOOL_GUIDANCE[self.agent]
         for name, body in load_skills(self.agent):
             prompt += f"\n\n## Skill: {name}\n{body}"
         prompt += "\n\nReturn ONLY one JSON object matching this response schema when done or waiting:\n"
@@ -49,7 +56,7 @@ class SubagentRun:
         from datapizza.agents import Agent
 
         agent = Agent(name=self.agent, client=self.client, system_prompt=self.system_prompt(),
-                      tools=self.tools(), max_steps=MAX_STEPS, terminate_on_text=True)
+                      tools=self.tools(request.get("policy_id")), max_steps=MAX_STEPS, terminate_on_text=True)
         task = json.dumps(request, ensure_ascii=False)
         if hint:
             task += "\n\n" + hint

@@ -100,8 +100,8 @@ _FORWARD = {
     State.RECEIVED: {State.ROUTED},
     # The router never closes: a supported request must not be rejected because the first guess was wrong.
     State.ROUTED: {State.GATHERING},
-    # ROUTED again = the single reroute to the other agent.
-    State.GATHERING: {State.ROUTED, State.AWAITING_CLARIFICATION, State.CLOSED, State.EVALUATING},
+    # ROUTED again = the single reroute to the other agent. COMPLETED = the customer withdrew the request.
+    State.GATHERING: {State.ROUTED, State.AWAITING_CLARIFICATION, State.CLOSED, State.EVALUATING, State.COMPLETED},
     # CLOSED = clarification timeout.
     State.AWAITING_CLARIFICATION: {State.GATHERING, State.CLOSED},
     # Harness-built writes before the proposal (claims lifecycle) run in EVALUATING and can close or hand over.

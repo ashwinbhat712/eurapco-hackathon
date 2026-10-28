@@ -34,6 +34,7 @@ OUTCOME_MESSAGES = {
 }
 
 UNHANDLED_NOTE = "Your message also asked for something else, which we did not handle; please send it separately."
+WITHDRAWN_MESSAGE = "As you asked, we have closed this request. Nothing was changed."
 
 
 def final_message(workflow, outcome, message):

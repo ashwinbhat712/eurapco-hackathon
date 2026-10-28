@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.workflow.messages import CATEGORY_MESSAGES, OUTCOME_MESSAGES, UNHANDLED_NOTE
+from app.workflow.messages import CATEGORY_MESSAGES, OUTCOME_MESSAGES, UNHANDLED_NOTE, WITHDRAWN_MESSAGE
 from app.workflow.ports import Action, Call, Decision, Findings, InformationCheck, RouteResult
 from app.workflow.schema import Vocabulary
 from app.workflow.states import Agent, Outcome, State
@@ -77,6 +77,34 @@ class TestMixedRequest:
         harness.router.result = RouteResult(agent=Agent.ADMINISTRATION)
         workflow = harness.send(harness.request("Please reimburse my invoice")).workflow
         assert workflow.other_requests == [] and workflow.message == "Done."
+
+
+class TestWithdrawal:
+    """Plan §16 #7: "forget it" ends the ticket as COMPLETED/no_change, without rules or writes."""
+
+    @staticmethod
+    def assert_withdrawn(harness, workflow):
+        assert (workflow.state, workflow.outcome) == (State.COMPLETED, Outcome.NO_CHANGE)
+        assert workflow.message == WITHDRAWN_MESSAGE and harness.rules.decide_calls == 0
+        assert harness.domain.calls == [] and workflow.write_ledger == []
+
+    def test_reply_withdraws_the_request(self, harness):
+        harness.admin.findings.extend([found("contact_update"), Findings(category="contact_update", withdrawn=True)])
+        harness.rules.checks[0] = InformationCheck(missing=("phone",), question="Which phone number?")
+        harness.send(harness.request("Update my contact details"))
+        workflow = harness.send(harness.reply("Forget it, I'll keep the old number.")).workflow
+        self.assert_withdrawn(harness, workflow)
+        assert harness.log()["human_rounds"]["clarification"] == 1
+
+    def test_request_that_is_already_withdrawn(self, harness):
+        harness.admin.findings.append(Findings(category="contact_update", withdrawn=True))
+        self.assert_withdrawn(harness, harness.send(harness.request("Change my phone... no, never mind.")).workflow)
+
+    def test_withdrawal_wins_over_a_reroute(self, harness):
+        harness.admin.findings.append(Findings(category="out_of_scope_claims", withdrawn=True))
+        workflow = harness.send(harness.request("Pay my invoice. Actually, forget it.")).workflow
+        self.assert_withdrawn(harness, workflow)
+        assert workflow.reroutes == 0 and harness.claims.contexts == []
 
 
 class TestOwnPolicyOnly:

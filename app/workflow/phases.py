@@ -1,5 +1,6 @@
 """Automatic phases between suspensions (architecture C). Each phase ends in exactly one transition."""
 
+from app.workflow.messages import WITHDRAWN_MESSAGE
 from app.workflow.ports import Action
 from app.workflow.proposal import Proposal, ProposalStatus
 from app.workflow.record import Clarification
@@ -26,7 +27,7 @@ class Phases:
 
     # Transition 2-4: the router is called once per workflow; its category is only a hint.
     async def route(self):
-        routing = self.session.deps.router.route(self.workflow.original_request["text"])
+        routing = await self.session.deps.router.route(self.workflow.original_request)
         self.workflow.handling_agent, self.workflow.category_hint = routing.agent, routing.category_hint
         self.session.log.route(routing.agent)
         self.session.move(State.ROUTED, reason=f"Routed to {routing.agent}.")
@@ -38,8 +39,14 @@ class Phases:
     # Transitions 5-8.
     async def gather(self):
         findings = await self.session.agent.gather(self.workflow.gather_context(), await self.session.read_tools())
+        self.session.log.event("model_response", source="gather", agent=self.workflow.handling_agent,
+                               findings=findings.model_dump(mode="json"))
         category = self._own_category(findings.category)
         self.workflow.classify(category)
+        if findings.withdrawn:
+            self.session.move(State.COMPLETED, outcome=Outcome.NO_CHANGE, reason="The customer withdrew the request.",
+                              message=WITHDRAWN_MESSAGE)
+            return
         if category not in REROUTE_TARGET:
             self.workflow.merge_facts(findings.facts)
             self.workflow.note_other_requests(findings.other_requests)

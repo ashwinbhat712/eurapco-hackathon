@@ -61,8 +61,8 @@ class ScriptedRouter:
     def __init__(self):
         self.result, self.texts = RouteResult(agent=Agent.ADMINISTRATION), []
 
-    def route(self, text):
-        self.texts.append(text)
+    async def route(self, request):
+        self.texts.append(request["text"])
         return self.result
 
 
