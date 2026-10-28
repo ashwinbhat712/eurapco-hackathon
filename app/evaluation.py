@@ -176,9 +176,10 @@ class EvaluationLog:
             raise ValueError("Input event belongs to a different ticket.")
         self.event("input", event=event)
 
-    def route(self, agent):
+    def route(self, agent, **details):
+        """Record the handling agent; `details` (e.g. source, rationale) explain why it was chosen."""
         candidate = {**self.record, "handling_agent": agent}
-        self._append(candidate, "routing", handling_agent=agent)
+        self._append(candidate, "routing", handling_agent=agent, **details)
         self._commit(candidate)
 
     def status(self, *, agent_state, request_outcome, reason, message="", request_category=None):
