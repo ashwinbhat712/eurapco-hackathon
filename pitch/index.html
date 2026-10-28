@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>pizzaclaim · the harness behind the agents</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<nav>
+  <a class="logo" href="#top">pizzaclaim_</a>
+  <a class="tab" href="#why" data-key="W"><kbd>W</kbd>Why us</a>
+  <a class="tab" href="#harness" data-key="H"><kbd>H</kbd>Harness</a>
+  <a class="tab" href="#states" data-key="S"><kbd>S</kbd>States</a>
+  <a class="tab" href="#mixed" data-key="M"><kbd>M</kbd>Mixed requests</a>
+  <a class="tab" href="#crash" data-key="C"><kbd>C</kbd>Crash-safe</a>
+  <a class="tab" href="#edges" data-key="E"><kbd>E</kbd>Edge cases</a>
+</nav>
+
+<!-- ================= HERO ================= -->
+<section id="top" class="row">
+  <div>
+    <div class="label"># pizzaclaim</div>
+    <h1>The LLM never decides, approves or pays.<br><span class="hl">It reads and writes.</span></h1>
+    <p class="lead">Four teams got the same two agents, nine tools and fifteen tickets. Everyone can make the
+      happy path work. We spent our time on the paths that are not happy: the wrong agent, two requests
+      in one message, a withdrawn claim, a process that dies halfway through a payment.</p>
+  </div>
+  <div class="term reveal">
+    <div class="term-bar"><i></i><i></i><i></i><span>~/pizzaclaim</span></div>
+<pre><span class="block"><span class="p">$</span> python -m app run examples/training/T08.json</span><span class="block"><span class="dim">RECEIVED  → ROUTED</span>         router: claims <span class="dim">(a guess, never final)</span>
+<span class="dim">ROUTED    → GATHERING</span>      agent reads invoice + prescription
+<span class="dim">GATHERING → EVALUATING</span>     facts frozen
+<span class="dim">EVALUATING</span>                 eligibility <span class="ok">✓</span>  duplicate <span class="ok">✓</span>  calc <span class="ok">€1 640.00</span>
+<span class="warn">EVALUATING → AWAITING_AUTHORIZATION</span>   1 640 &gt; 1 500 · proposal frozen</span><span class="block"><span class="p">$</span> python -m app run examples/events/insurer_approved.json</span><span class="block"><span class="dim">AWAITING_AUTHORIZATION → EXECUTING</span>   stored call, no model
+<span class="dim">ledger</span>  create_claim  <span class="warn">PENDING</span> → <span class="ok">DONE</span>
+<span class="ok">EXECUTING → COMPLETED</span>  outcome=paid</span><span class="dim"># same run_id, same log, one payment. (illustrative)</span></pre>
+  </div>
+</section>
+
+<section>
+  <div class="stats reveal">
+    <div class="stat"><b>0</b><span>business decisions made by the model</span></div>
+    <div class="stat"><b>11</b><span>internal states, one transition table</span></div>
+    <div class="stat"><b>1</b><span>max reroute · 1 question · 1 approval</span></div>
+    <div class="stat"><b>3</b><span>max format corrections, then handover</span></div>
+    <div class="stat"><b>260+</b><span>tests, all runnable without an API key</span></div>
+  </div>
+</section>
+
+<!-- ================= WHY US ================= -->
+<section id="why">
+  <div class="label"># Why us</div>
+  <h2>Same challenge. Different question.</h2>
+  <p class="lead">Most harnesses ask <i>"how do we get the model to do the right thing?"</i>
+    We asked <i>"what is the model allowed to do at all?"</i></p>
+  <div class="fig reveal">
+    <div class="fig-cap">[ fig. 1 — what the baseline gives you vs. what we added ]</div>
+    <table>
+      <tr><th>Concern</th><th>Baseline</th><th>Prompt-only approach</th><th>pizzaclaim</th></tr>
+      <tr><td>Who sets the agent state?</td><td>Guessed from final JSON</td><td>Model, via prompt</td><td class="us">Code, at every step</td></tr>
+      <tr><td>Reimbursement math</td><td>Model</td><td>Model + tool</td><td class="us">Deterministic, in cents</td></tr>
+      <tr><td>Clarification reply</td><td class="n">Rejected</td><td>New request</td><td class="us">Resumes the same ticket &amp; log</td></tr>
+      <tr><td>Approved by insurer</td><td>—</td><td>Model rebuilds the call</td><td class="us">Executes the frozen proposal</td></tr>
+      <tr><td>Process crash mid-payment</td><td class="n">Pay again</td><td class="n">Pay again</td><td class="us">Write-ahead ledger, never twice</td></tr>
+      <tr><td>Wrong agent</td><td>Final answer</td><td>Handoff loop</td><td class="us">Max one reroute, never closes</td></tr>
+      <tr><td>"Do A and B"</td><td>Does both, or neither</td><td>Unpredictable</td><td class="us">A done, B named as not handled</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- ================= HARNESS ================= -->
+<section id="harness">
+  <div class="label"># Harness</div>
+  <h2>Your claims department, defined in code.</h2>
+  <p class="lead">Hybrid by design: code owns the phases and transitions. Inside a phase the model gets a
+    phase-scoped tool set and its skills. It extracts facts and phrases the reply. Nothing else.</p>
+
+  <div class="fig reveal">
+    <div class="fig-cap">[ fig. 2 — one ticket, end to end ]</div>
+    <div class="fig-body">
+      <div class="flow">
+        <div class="node">  <b>event</b>request · reply · decision</div><div class="arrow">→</div>
+        <div class="node code-owned"><b>admission</b>by ticket_id, idempotent on event_id</div><div class="arrow">→</div>
+        <div class="node llm"><b>router</b>first guess only</div><div class="arrow">→</div>
+        <div class="node llm"><b>agent · gathering</b>read tools + skills → facts</div>
+      </div>
+      <div class="flow" style="margin-top:.5rem; flex-direction: row-reverse;">
+        <div class="node code-owned"><b>9 MCP tools</b>isolated domain run</div><div class="arrow">←</div>
+        <div class="node code-owned"><b>write guard</b>state gate · decision match · ledger</div><div class="arrow">←</div>
+        <div class="node code-owned"><b>rules engine</b>eligibility · duplicate · calculator</div><div class="arrow">←</div>
+        <div class="node code-owned"><b>state machine</b>ask once? approve? write?</div>
+      </div>
+      <div class="legend"><span class="lc">code owns it (deterministic, tested)</span><span class="ll">model helps (reads &amp; writes text)</span></div>
+    </div>
+  </div>
+
+  <div class="fig reveal">
+    <div class="tabs">
+      <button data-file="states.py">States</button><button data-file="guard.py#owned">Guard</button><button data-file="eligibility.py">Rules</button><button data-file="duplicates.py">Duplicates</button><button data-file="guard.py">Ledger</button>
+    </div>
+    <div class="explorer">
+      <div class="tree">
+        <div class="dir">▸ app/workflow/</div>
+        <button data-file="states.py">states.py</button>
+        <button data-file="guard.py">guard.py · ledger</button>
+        <button data-file="guard.py#owned">guard.py · owned fields</button>
+        <div class="dir">▸ app/checks/</div>
+        <button data-file="eligibility.py">eligibility.py</button>
+        <button data-file="duplicates.py">duplicates.py</button>
+      </div>
+      <div class="code"><div class="file"><span id="code-name"></span><span>python</span></div><pre id="code-pre"></pre></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= STATES ================= -->
+<section id="states">
+  <div class="label"># States</div>
+  <h2>11 states. One table. No surprises.</h2>
+  <p class="lead"><code>StateMachine.transition()</code> refuses any move that is not in the table.
+    Terminal states never move again. Every state maps to exactly one of the six logged agent states.</p>
+  <div class="fig reveal">
+    <div class="fig-cap">[ fig. 3 — internal state → logged agent_state ]</div>
+    <div class="fig-body sm">
+      <div class="st proc">RECEIVED<small>processing</small></div>
+      <div class="st proc">ROUTED<small>processing · never closes</small></div>
+      <div class="st proc">GATHERING<small>processing · model reads</small></div>
+      <div class="st wait">AWAITING_CLARIFICATION<small>asks once · 14-day timeout</small></div>
+      <div class="st proc">EVALUATING<small>processing · rules, no model</small></div>
+      <div class="st wait">AWAITING_AUTHORIZATION<small>proposal frozen</small></div>
+      <div class="st proc">EXECUTING<small>only the write in the Decision</small></div>
+      <div class="st end">COMPLETED<small>paid · updated · terminated · no_change</small></div>
+      <div class="st end">CLOSED<small>not_covered · duplicate · rejected …</small></div>
+      <div class="st end">HANDOVER<small>a human continues</small></div>
+      <div class="st fail">FAILED<small>technical_failure, real root cause</small></div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= MIXED ================= -->
+<section id="mixed">
+  <div class="label"># Mixed requests</div>
+  <h2>"Pay my invoice <u>and</u> change my address."</h2>
+  <p class="lead"><b>Rule:</b> one ticket handles one operation. Anything else is noted, not carried out,
+    and the customer is told to send it separately.</p>
+  <div class="row">
+    <div class="steps reveal">
+      <div class="step"><div><b>Router</b> picks one agent. It never closes the ticket.</div></div>
+      <div class="step"><div><b>Agent</b> picks one category for the main operation (A) and lists the rest as short phrases in <code>other_requests</code> (B).</div></div>
+      <div class="step"><div><b>gather</b> keeps only A's facts and adds a note: <i>"Not handled, to be sent separately: …"</i></div></div>
+      <div class="step"><div><b>A</b> takes the normal path: clarification, decision, approval if needed, execution. B has no effect on it.</div></div>
+      <div class="step"><div><b>Final message:</b> whatever the outcome, <code>UNHANDLED_NOTE</code> is appended when <code>other_requests</code> is not empty.</div></div>
+    </div>
+    <div class="term reveal">
+      <div class="term-bar"><i></i><i></i><i></i><span>reply.txt</span></div>
+<pre><span class="dim">request:</span> "Reimburse invoice INV-2026-008 and please
+          move me to my new address."
+
+<span class="dim">category:</span>       reimbursement_request
+<span class="dim">other_requests:</span> [<span class="warn">"address change"</span>]
+
+<span class="ok">✓</span> Your invoice has been reimbursed: €180.00.
+<span class="warn">!</span> Not handled, to be sent separately:
+  address change.</pre>
+    </div>
+  </div>
+</section>
+
+<!-- ================= CRASH ================= -->
+<section id="crash">
+  <div class="label"># Crash-safe</div>
+  <h2>Kill it at any line. It still pays once.</h2>
+  <p class="lead">Every write goes through a write-ahead ledger that is saved <b>before</b> the domain is called.
+    A reply can arrive in a new process, days later. The ticket picks up exactly where it stopped.</p>
+  <div class="fig reveal">
+    <div class="fig-cap">[ fig. 4 — the write path, and what happens if the process dies ]</div>
+    <div class="fig-body">
+      <div class="flow">
+        <div class="node code-owned"><b>1 · hash</b>digest of tool + args</div><div class="arrow">→</div>
+        <div class="node code-owned"><b>2 · ledger</b>append PENDING, save</div><div class="arrow">→</div>
+        <div class="node"><b>3 · domain</b>create_claim / pay</div><div class="arrow">→</div>
+        <div class="node code-owned"><b>4 · settle</b>DONE / FAILED, save</div>
+      </div>
+      <table style="margin-top:1.5rem">
+        <tr><th>Crash after…</th><th>On restart</th></tr>
+        <tr><td>step 1</td><td>Nothing written. Run normally.</td></tr>
+        <tr><td>step 2 or 3</td><td><code>create_claim</code> is not idempotent → look it up by provider + invoice no + year before calling again.</td></tr>
+        <tr><td>step 4</td><td>Entry is DONE → return the stored result. <b>A successful write is never repeated.</b></td></tr>
+      </table>
+    </div>
+  </div>
+  <div class="row">
+    <div class="card reveal"><span class="tag">FROZEN FACTS</span><h3>A reply can only add.</h3>Original facts are frozen. A clarification reply fills the gap; it cannot rewrite the invoice.</div>
+    <div class="card reveal"><span class="tag">FROZEN PROPOSAL</span><h3>Approved means exactly that.</h3>On approval we execute the stored call. The model is never asked for the arguments again. Rejected: nothing happens, we explain.</div>
+  </div>
+</section>
+
+<!-- ================= EDGES ================= -->
+<section id="edges">
+  <div class="label"># Edge cases</div>
+  <h2>Beyond the happy path.</h2>
+  <p class="lead">Each one is a test. Pure checks in <code>app/checks</code>: no I/O, no model, no flakiness.</p>
+  <div class="grid reveal">
+    <div class="card"><span class="tag">MIXED</span><h3>Do A and B</h3>One operation is handled; the reply says explicitly that the rest was not.<span class="t">test_other_operation_is_named_in_reason_and_message</span></div>
+    <div class="card"><span class="tag">WITHDRAWAL</span><h3>"Never mind, forget it"</h3>The ticket ends as <code>no_change</code>, even if a reroute was pending.<span class="t">test_withdrawal_wins_over_a_reroute</span></div>
+    <div class="card"><span class="tag">PRESCRIPTION</span><h3>Right patient, right service</h3>The prescription must name the same patient and service as the invoice.</div>
+    <div class="card"><span class="tag">ROUTING</span><h3>Wrong agent ≠ rejected</h3>The router can never close a ticket. A wrong agent costs at most one handover.<span class="t">test_category_from_the_other_agents_list_is_handed_over</span></div>
+    <div class="card"><span class="tag">THRESHOLD</span><h3>€1 500.00 exactly</h3>Approval is on the <b>final reimbursement</b>, not the invoice amount. Exactly 1500 is paid without approval.</div>
+    <div class="card"><span class="tag">DUPLICATE</span><h3>payment_failed is still a duplicate</h3>Blocks claims that are paid, pending approval, registered <b>or</b> <code>payment_failed</code>.</div>
+    <div class="card"><span class="tag">SCOPE</span><h3>Only your own policy</h3>A write on any policy but the ticket's own never reaches the domain.<span class="t">test_write_on_another_policy_is_blocked</span></div>
+    <div class="card"><span class="tag">INJECTION</span><h3>We never echo the request</h3>Closing messages are fixed texts, so harmful or injected text is not repeated back.<span class="t">test_closing_category_gets_a_fixed_message_without_the_request_text</span></div>
+    <div class="card"><span class="tag">TIMEOUT</span><h3>The customer never answers</h3>A suspended ticket expires on event timestamps: deterministic and replayable.<span class="t">test_timeout_replaces_the_open_question</span></div>
+    <div class="card"><span class="tag">DATES</span><h3>Invoice before service</h3>Rejected as invalid input, as is any non-EUR invoice.</div>
+    <div class="card"><span class="tag">CORRECTIONS</span><h3>Fix the field, not the facts</h3>On a format error the model may change only the field named in the error. Max 3, then handover.</div>
+    <div class="card"><span class="tag">NOT INSURED</span><h3>Close before any write</h3>A patient not on the policy closes the ticket before anything is written.<span class="t">test_not_insured_closes_before_any_write</span></div>
+  </div>
+</section>
+
+<!-- ================= MEMES ================= -->
+<section id="memes">
+  <div class="label"># Meanwhile, behind the scenes</div>
+  <h2>Let's see who's really behind this.</h2>
+  <div class="memes">
+    <figure class="meme reveal">
+      <img src="img/unmask-1.png" alt="Unmasking pizzaclaim's awesome AI agent harness" onerror="this.replaceWith(document.getElementById('unmask-1').content.cloneNode(true))">
+      <figcaption>pizzaclaim's awesome AI agent harness…</figcaption>
+    </figure>
+    <figure class="meme reveal">
+      <img src="img/unmask-2.png" alt="It was vibe coding all along" onerror="this.replaceWith(document.getElementById('unmask-2').content.cloneNode(true))">
+      <figcaption>…but the state machine is still deterministic.</figcaption>
+    </figure>
+    <figure class="meme reveal">
+      <div class="drake">
+        <div class="face no">✗</div><div class="no">Let the LLM approve a €1 640 payment</div>
+        <div class="face yes">✓</div><div class="yes">Let the LLM write a polite "your claim was paid"</div>
+      </div>
+      <figcaption>Our entire architecture, in one meme.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<template id="unmask-1">
+  <div class="unmask">
+    <div class="who ghost">👻<span>PIZZACLAIM'S AWESOME AI AGENT HARNESS</span></div>
+    <div class="who fred">🧑‍🦱<span>LET'S SEE WHO'S REALLY BEHIND THIS</span></div>
+  </div>
+</template>
+<template id="unmask-2">
+  <div class="unmask">
+    <div class="who villain">�<span>CLAUDE OPUS 5.5</span></div>
+    <div class="who fred">🧑‍🦱<span>AHA! IT WAS VIBE CODING ALL ALONG!</span></div>
+  </div>
+</template>
+
+<footer>pizzaclaim · Eurapco hackathon 2026 · press <kbd>W</kbd> <kbd>H</kbd> <kbd>S</kbd> <kbd>M</kbd> <kbd>C</kbd> <kbd>E</kbd> to jump</footer>
+<script src="app.js"></script>
+</body>
+</html>
