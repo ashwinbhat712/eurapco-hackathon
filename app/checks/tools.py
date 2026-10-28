@@ -53,8 +53,9 @@ class LocalTool(ABC):
     # the agent loop in the middle of a ticket.
     _DATA_ERRORS = (KeyError, TypeError, ValueError, AttributeError)
 
-    def __init__(self, domain, policy_id):
-        self.domain, self.policy_id = domain, policy_id
+    def __init__(self, reader, policy_id):
+        """reader: a ReadCache (or anything with `async read(name, arguments)`)."""
+        self.reader, self.policy_id = reader, policy_id
 
     async def __call__(self, **arguments):
         missing = [key for key in self.required if arguments.get(key) in (None, "")]
@@ -63,7 +64,7 @@ class LocalTool(ABC):
         invalid = self.validate(**arguments)
         if invalid:
             return invalid
-        read = await self.domain.call(self.reads, {"policy_id": self.policy_id})
+        read = await self.reader.read(self.reads, {"policy_id": self.policy_id})
         if not read.get("ok"):
             return read
         try:

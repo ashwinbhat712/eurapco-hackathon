@@ -34,9 +34,9 @@ class LocalToolkit:
     ERROR_GUIDANCE = (" If one of these tools returns an error with retryable true, correct the named field and call "
                       "it again; with retryable false, do not write anything based on it.")
 
-    def __init__(self, agent, domain, policy_id, log=None):
+    def __init__(self, agent, reader, policy_id, log=None):
         """policy_id comes from the ticket, never from the model: every tool is bound to it here."""
-        self.tools = [tool(domain, policy_id) for tool in self.ACCESS[agent]]
+        self.tools = [tool(reader, policy_id) for tool in self.ACCESS[agent]]
         self.log = log
 
     @classmethod

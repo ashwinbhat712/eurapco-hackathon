@@ -20,13 +20,16 @@ class SubagentRun:
     def tools(self, policy_id=None):
         from datapizza.tools import Tool
 
+        from app.checks.cache import ReadCache
         from app.checks.toolkit import LocalToolkit
+
+        cache = ReadCache(self.domain)  # One per ticket run: model reads fill it, any write clears it.
 
         def make(name):
             schema = tool_schema(name, model_facing=True)
 
             async def invoke(**arguments):
-                result = await self.domain.call(name, arguments)
+                result = await cache.call(name, arguments)
                 if name in WRITE_TOOLS and result.get("ok"):
                     self.successful_writes.append(name)
                 return json.dumps(result, ensure_ascii=False)
@@ -37,7 +40,7 @@ class SubagentRun:
         domain_tools = [make(name) for name in ACCESS[self.agent]]
         if not policy_id:
             return domain_tools
-        toolkit = LocalToolkit(self.agent, self.domain, policy_id, getattr(self.domain, "log", None))
+        toolkit = LocalToolkit(self.agent, cache, policy_id, getattr(self.domain, "log", None))
         return domain_tools + toolkit.datapizza_tools()
 
     def system_prompt(self):
