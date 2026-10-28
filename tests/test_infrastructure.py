@@ -270,6 +270,7 @@ def test_real_stdio_mcp_discovery_reads_errors_and_bound_context(tmp_path, monke
 
 def test_cli_names_the_actual_problem(monkeypatch, capsys):
     import app.__main__ as cli
+    monkeypatch.setattr(cli, "load_dotenv", lambda *args, **kwargs: None)  # A local .env must not refill the key.
     monkeypatch.setattr("sys.argv", ["app", "run", str(ROOT / "examples/events/clarification_reply.json")])
     assert cli.main() == 1
     assert "Reply events are not admitted" in capsys.readouterr().err
