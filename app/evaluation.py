@@ -53,7 +53,7 @@ def json_value(value, field="record", ancestors=None):
             raise InvalidEvaluationLog(field, "datetime requires an explicit timezone")
         return value.isoformat()
     if isinstance(value, PurePath):
-        return str(value)
+        return value.as_posix()  # Stable evidence across operating systems.
     if not isinstance(value, (dict, list, tuple)):
         raise InvalidEvaluationLog(field, f"unsupported value type {type(value).__name__}")
     ancestors = set() if ancestors is None else ancestors
