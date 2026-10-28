@@ -1,7 +1,7 @@
 """Supervisor: classifies each request and decides which subagent handles it.
 
-The model only classifies (structured output, no tools). Agent selection, vocabulary
-checks and re-routing are deterministic code, so the log always gets one coherent
+The model only classifies (structured output, no tools). Agent selection and vocabulary
+checks are deterministic code, so the log always gets one coherent
 handling_agent/request_category pair. There is no keyword fallback: if classification
 keeps failing, the request fails as a technical failure.
 """
@@ -16,9 +16,6 @@ from app.contracts import ROOT, document
 CLASSIFY_ATTEMPTS = 2
 
 AGENTS = ("administration", "claims")
-OTHER_AGENT = {"administration": "claims", "claims": "administration"}
-# Category a subagent returns when the operation belongs to the other agent.
-CROSS_DOMAIN = {"administration": "out_of_scope_claims", "claims": "out_of_scope_administration"}
 
 SupervisorCategory = Literal[
     "policy_enquiry", "contact_update", "coverage_change", "policy_termination",

@@ -72,15 +72,15 @@ The CLI prints both the response and evaluation-file path. Never commit `.env`.
    There is no keyword/regex fallback: the call is retried once, and if it still fails
    the request is logged as `failed` / `technical_failure` without a guessed agent.
 2. **Dispatch** (`app/runtime.py`): code, not the model, runs exactly one subagent and
-   passes the supervisor's category as a hint. If that subagent answers with the
-   cross-domain category (`out_of_scope_claims` / `out_of_scope_administration`) and made
-   no successful write, it re-routes once to the other agent.
+   passes the supervisor's category as a hint. There is no agent-to-agent handoff: if
+   that subagent answers with the cross-domain category (`out_of_scope_claims` /
+   `out_of_scope_administration`), that is the final answer.
 3. **Subagents** (`app/subagents.py`): datapizza `Agent`s whose tools wrap
    `DomainClient.call`, so every tool call/result reaches the evaluation log. Skills from
    `skills/<agent>/*.md` are appended to the prompt.
 
-The log records the supervisor decision, each `routing` hop and any category mismatch
-between supervisor and subagent as `model_response` events.
+The log records the supervisor decision, the `routing` event (with its rationale) and any
+category mismatch between supervisor and subagent as `model_response` events.
 
 ## Starting behavior
 

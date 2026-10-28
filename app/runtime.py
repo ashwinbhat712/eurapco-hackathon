@@ -1,4 +1,4 @@
-"""Supervisor-driven runtime: classify, dispatch to one subagent, re-route once if needed.
+"""Supervisor-driven runtime: classify, then dispatch to exactly one subagent (no agent handoff).
 
 Still handles initial requests only; human reply/resumption is a later step.
 """
@@ -9,18 +9,13 @@ from app.contracts import validator
 from app.llm import make_client
 from app.mcp_client import DomainClient
 from app.subagents import SubagentRun
-from app.supervisor import CROSS_DOMAIN, OTHER_AGENT, SupervisorUnavailable, classify
+from app.supervisor import SupervisorUnavailable, classify
 
 
 def classification_hint(decision):
     return (f"Supervisor routing: this request is classified as request_category={decision.request_category}. "
             "Use exactly this request_category in your final JSON unless it is clearly impossible "
             "for the operation the policyholder asked for.")
-
-
-def handoff_hint(previous_agent):
-    return (f"Supervisor routing: the {previous_agent} agent judged this operation outside its domain and "
-            "handed it to you. Classify it with your own request categories.")
 
 
 def record_final(log, final):
@@ -34,27 +29,16 @@ def record_final(log, final):
 
 
 async def dispatch(request, run_id, log, client, decision):
-    """Run the chosen subagent; hand over once to the other agent on a cross-domain answer."""
-    agent, hint = decision.agent, classification_hint(decision)
-    reason = {"source": "supervisor", "request_category": decision.request_category,
-              "rationale": decision.rationale, "attempts": decision.attempts}
-    for hop in range(2):
-        log.route(agent, **reason)
-        async with DomainClient(run_id, agent, log) as domain:
-            subagent = SubagentRun(agent, client, domain)
-            final = await subagent.run(request, hint)
-        crossed = final["request_category"] == CROSS_DOMAIN[agent]
-        if crossed and hop == 0 and not subagent.successful_writes:
-            log.event("model_response", source=agent, handoff_to=OTHER_AGENT[agent], response=final)
-            reason = {"source": agent, "request_category": final["request_category"],
-                      "rationale": final["reason"]}
-            print(f"Handoff: {agent} -> {OTHER_AGENT[agent]} - {final['reason']}", file=sys.stderr)
-            agent, hint = OTHER_AGENT[agent], handoff_hint(agent)
-            continue
-        if final["request_category"] != decision.request_category:
-            log.event("model_response", source="supervisor", classification_mismatch={
-                "supervisor": decision.request_category, "subagent": final["request_category"]})
-        return final
+    """Run the supervisor's chosen subagent; its answer is final, even when it is out of scope."""
+    log.route(decision.agent, source="supervisor", request_category=decision.request_category,
+              rationale=decision.rationale, attempts=decision.attempts)
+    async with DomainClient(run_id, decision.agent, log) as domain:
+        subagent = SubagentRun(decision.agent, client, domain)
+        final = await subagent.run(request, classification_hint(decision))
+    if final["request_category"] != decision.request_category:
+        log.event("model_response", source="supervisor", classification_mismatch={
+            "supervisor": decision.request_category, "subagent": final["request_category"]})
+    return final
 
 
 async def run_request(request, run_id, log, provider=None):

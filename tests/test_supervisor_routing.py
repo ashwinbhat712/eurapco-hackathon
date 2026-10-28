@@ -1,4 +1,4 @@
-"""Supervisor routing: normalization, fallback and one-hop re-routing, without a model."""
+"""Supervisor routing: normalization, retries and single-agent dispatch, without a model."""
 
 import asyncio
 import json
@@ -116,26 +116,17 @@ def test_routing_decision_is_validated_for_logging():
         RoutingDecision(agent="claims", request_category="claim_enquiry", rationale="")
 
 
-def test_cross_domain_answer_is_rerouted_once(monkeypatch, tmp_path):
+def test_cross_domain_answer_is_final_without_handoff(monkeypatch, tmp_path):
     decision = decision_for("administration", "claim_enquiry")
     answers = {"administration": final("out_of_scope_claims", "closed_without_execution", "out_of_scope"),
                "claims": final("claim_enquiry")}
     result, calls, log = run_dispatch(monkeypatch, tmp_path, decision, answers)
-    assert [agent for agent, _ in calls] == ["administration", "claims"]
-    assert result["request_category"] == "claim_enquiry"
-    assert log.record["handling_agent"] == "claims"
-    routes = [event["data"] for event in log.record["events"] if event["kind"] == "routing"]
-    assert routes[0] == {"handling_agent": "administration", "source": "supervisor",
-                         "request_category": "claim_enquiry", "rationale": "x", "attempts": 1}
-    assert routes[1] == {"handling_agent": "claims", "source": "administration",
-                         "request_category": "out_of_scope_claims", "rationale": "r"}
-
-
-def test_no_reroute_after_successful_write(monkeypatch, tmp_path):
-    decision = decision_for("administration", "contact_update")
-    answers = {"administration": final("out_of_scope_claims", "closed_without_execution", "out_of_scope")}
-    _, calls, _ = run_dispatch(monkeypatch, tmp_path, decision, answers, writes=["update_contact_details"])
     assert [agent for agent, _ in calls] == ["administration"]
+    assert result["request_category"] == "out_of_scope_claims"
+    assert log.record["handling_agent"] == "administration"
+    routes = [event["data"] for event in log.record["events"] if event["kind"] == "routing"]
+    assert routes == [{"handling_agent": "administration", "source": "supervisor",
+                       "request_category": "claim_enquiry", "rationale": "x", "attempts": 1}]
 
 
 def test_supervisor_category_is_passed_as_hint(monkeypatch, tmp_path):
