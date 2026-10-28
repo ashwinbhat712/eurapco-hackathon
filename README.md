@@ -22,6 +22,7 @@ macOS / Linux:
 python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
+python -m pip install --no-deps datapizza-ai-clients-anthropic==0.0.8
 cp .env.example .env
 python -m app check
 ```
@@ -32,9 +33,14 @@ Windows PowerShell:
 py -3.12 -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+python -m pip install --no-deps datapizza-ai-clients-anthropic==0.0.8
 Copy-Item .env.example .env
 python -m app check
 ```
+
+`datapizza-ai-clients-anthropic` declares `anthropic<1.0`, but it only uses
+`messages.create`/`messages.parse`, which the pinned `anthropic==1.13.0` provides,
+so it is installed with `--no-deps` (on macOS/Linux too).
 
 If PowerShell blocks activation, use `.venv\Scripts\python.exe` in place of
 `python`; changing the computer's execution policy is not required.
@@ -57,11 +63,30 @@ Each invocation is a **new independent
 execution**, with a fresh domain copy, run ID and cumulative log under `logs/`.
 The CLI prints both the response and evaluation-file path. Never commit `.env`.
 
+## Routing: supervisor + subagents (datapizza-ai)
+
+1. **Supervisor** (`app/supervisor.py`, prompt `agents/supervisor/prompt.md`): one
+   datapizza `Agent` call with structured output (`Classification`) and no tools. It
+   returns the request category; code derives the handling agent from the vocabulary
+   (the model's agent choice only matters for shared `out_of_scope_other`/`unclear`).
+   There is no keyword/regex fallback: the call is retried once, and if it still fails
+   the request is logged as `failed` / `technical_failure` without a guessed agent.
+2. **Dispatch** (`app/runtime.py`): code, not the model, runs exactly one subagent and
+   passes the supervisor's category as a hint. There is no agent-to-agent handoff: if
+   that subagent answers with the cross-domain category (`out_of_scope_claims` /
+   `out_of_scope_administration`), that is the final answer.
+3. **Subagents** (`app/subagents.py`): datapizza `Agent`s whose tools wrap
+   `DomainClient.call`, so every tool call/result reaches the evaluation log. Skills from
+   `skills/<agent>/*.md` are appended to the prompt.
+
+The log records the supervisor decision, the `routing` event (with its rationale) and any
+category mismatch between supervisor and subagent as `model_response` events.
+
 ## Starting behavior
 
-Policy and reimbursement enquiries retrieve and explain existing records. A small
-keyword router chooses an agent. Both agents have monolithic prompts and their
-domain tools. Required human interactions are described in those prompts; the
+Policy and reimbursement enquiries retrieve and explain existing records. Both agents
+have monolithic prompts and their domain tools. Required human interactions are
+described in those prompts; the
 initial loop can ask/stop but **does not receive or resume human replies**.
 The CLI rejects reply events explicitly rather than pretending to have resumed.
 
@@ -75,7 +100,8 @@ All effects stay inside an isolated fictional JSON data store.
 ```text
 agents/administration/   Administration code and monolithic prompt
 agents/claims/           Claims code and monolithic prompt
-app/                    Router, baseline loop, MCP client, logger and skill loader
+agents/supervisor/       Supervisor classification prompt
+app/                    Supervisor, dispatch runtime, subagents, MCP client, logger and skill loader
 mcp_server/             Nine provided domain tools over stdio or Streamable HTTP
 data/initial.json       Shared initial domain fixtures; copied for each new run
 contracts/              Events, tools, response, vocabulary and evaluation schemas

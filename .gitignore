@@ -29,3 +29,6 @@ htmlcov/
 # Local working documents
 docs/workflow-state-plan.md
 challenge.html
+.env
+.venv/
+.runtime/
